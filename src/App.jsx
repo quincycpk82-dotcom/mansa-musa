@@ -1,9 +1,56 @@
 import { useState, useRef, useEffect } from "react";
 import IntelFeed from "./components/IntelFeed.jsx";
+import PortfolioEdit from "./components/PortfolioEdit.jsx";
 
 const ENDPOINT = import.meta.env.VITE_MANSA_ENDPOINT;
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const STOCKS_ENDPOINT = import.meta.env.VITE_STOCKS_ENDPOINT;
+
+const DEFAULT_PORTFOLIO = {
+  k401: 184000,
+  realEstate: 274000,
+  passiveMonthly: 1546,
+  cash: 74000,
+  iBonds: 0,
+  gold: 6600,
+  crypto: 0,
+  other: 0,
+  stocks: {
+    VOO:  { shares: 61.34,  avgCost: 550.72 },
+    VTI:  { shares: 96.58,  avgCost: 291.33 },
+    MSFT: { shares: 65.59,  avgCost: 419.70 },
+    NVDA: { shares: 103.05, avgCost: 115.90 },
+    AMZN: { shares: 39.00,  avgCost: 173.54 },
+    HOOD: { shares: 95.00,  avgCost: 83.91  },
+    UBER: { shares: 70.00,  avgCost: 87.74  },
+    NFLX: { shares: 42.00,  avgCost: 94.65  },
+  },
+};
+
+function loadPortfolio() {
+  try {
+    const saved = localStorage.getItem("mm_portfolio");
+    return saved ? { ...DEFAULT_PORTFOLIO, ...JSON.parse(saved) } : DEFAULT_PORTFOLIO;
+  } catch { return DEFAULT_PORTFOLIO; }
+}
+
+function loadPriceCache() {
+  try {
+    const saved = localStorage.getItem("mm_prices");
+    if (!saved) return null;
+    const cache = JSON.parse(saved);
+    const age = Date.now() - new Date(cache.timestamp).getTime();
+    if (age > 6 * 60 * 60 * 1000) return null; // stale after 6h
+    return cache;
+  } catch { return null; }
+}
+
+function fmtK(n) {
+  if (n >= 1000000) return `$${(n / 1000000).toFixed(2)}M`;
+  if (n >= 1000) return `$${(n / 1000).toFixed(0)}K`;
+  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
 
 const QUICK_PROMPTS = [
   { label: "Quick Cash", icon: "⚡", color: "#D4A830", prompt: "Find me $500-2000 I can earn in the next 14 days. Search current gigs, contracts, grants with deadlines, and one-off opportunities that match my React/TypeScript/Supabase + financial coaching + former pro athlete skill set. Be specific — name platforms, link where possible, and rank by realistic speed-to-first-dollar." },
@@ -16,12 +63,6 @@ const QUICK_PROMPTS = [
   { label: "Grants & Pitches", icon: "◇", color: "#B8A63A", prompt: "Find open grants, pitch competitions, and accelerator programs I qualify for right now. Prioritize: Black founders, HBCU alumni, fintech/AI, Florida/Georgia based, under 3-year-old businesses. List deadlines and award amounts." },
 ];
 
-const PORTFOLIO = [
-  ["401k", "$184K", "#C4962A"],
-  ["Brokerage", "$132K", "#4A8C6A"],
-  ["Real Estate", "$274K", "#5A7AAF"],
-  ["Passive/mo", "$1,546", "#8C5A9A"],
-];
 
 async function fileToBase64(file) {
   return new Promise((resolve, reject) => {
@@ -195,7 +236,18 @@ function ChatView({ seedMessage, onClearSeed }) {
   );
 }
 
-function DeckView({ onPick, portfolio }) {
+function DeckView({ onPick, onEditPortfolio, portfolio, stockPrices, netWorth }) {
+  const stockValue = Object.entries(portfolio.stocks).reduce((sum, [ticker, s]) => {
+    return sum + s.shares * (stockPrices[ticker] || s.avgCost);
+  }, 0);
+
+  const rows = [
+    ["401k", fmtK(portfolio.k401), "#C4962A"],
+    ["Brokerage", fmtK(stockValue + portfolio.cash), "#4A8C6A"],
+    ["Real Estate", fmtK(portfolio.realEstate), "#5A7AAF"],
+    ["Passive/mo", `$${portfolio.passiveMonthly.toLocaleString()}`, "#8C5A9A"],
+  ];
+
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "16px 14px", background: "#09080A", WebkitOverflowScrolling: "touch" }}>
       <div style={{ fontSize: 11, color: "#3A3015", letterSpacing: "0.22em", textTransform: "uppercase", marginBottom: 12, paddingLeft: 2 }}>Command Deck</div>
@@ -214,19 +266,27 @@ function DeckView({ onPick, portfolio }) {
         ))}
       </div>
 
-      <div style={{ fontSize: 11, color: "#3A3015", letterSpacing: "0.22em", textTransform: "uppercase", marginBottom: 12, paddingLeft: 2 }}>Portfolio</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, paddingLeft: 2 }}>
+        <div style={{ fontSize: 11, color: "#3A3015", letterSpacing: "0.22em", textTransform: "uppercase" }}>Portfolio</div>
+        <button onClick={onEditPortfolio} style={{
+          background: "transparent", border: "1px solid #2A2010", borderRadius: 6,
+          color: "#C4962A", fontSize: 11, padding: "4px 10px", cursor: "pointer",
+          fontFamily: "Georgia, serif", letterSpacing: "0.1em",
+        }}>✎ Edit</button>
+      </div>
+
       <div style={{ background: "#0F0E08", border: "1px solid #1E1A0E", borderRadius: 12, overflow: "hidden" }}>
-        {PORTFOLIO.map(([k, v, c], i) => (
-          <div key={k} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", borderBottom: i < PORTFOLIO.length - 1 ? "1px solid #181408" : "none" }}>
+        {rows.map(([k, v, c], i) => (
+          <div key={k} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", borderBottom: i < rows.length - 1 ? "1px solid #181408" : "none" }}>
             <span style={{ fontSize: 13, color: "#8A7A48" }}>{k}</span>
             <span style={{ fontSize: 15, color: c, fontWeight: 600 }}>{v}</span>
           </div>
         ))}
       </div>
 
-      <div style={{ marginTop: 24, padding: "14px 16px", background: "#0F0E08", border: "1px solid #1E1A0E", borderRadius: 12 }}>
+      <div style={{ marginTop: 14, padding: "14px 16px", background: "#0F0E08", border: "1px solid #1E1A0E", borderRadius: 12 }}>
         <div style={{ fontSize: 11, color: "#3A3015", letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 8 }}>Total Net Worth</div>
-        <div style={{ fontSize: 28, color: "#C4962A", fontWeight: 700 }}>$613K</div>
+        <div style={{ fontSize: 28, color: "#C4962A", fontWeight: 700 }}>{fmtK(netWorth)}</div>
         <div style={{ fontSize: 11, color: "#4A3E1E", marginTop: 4 }}>Top 15-18% · Age 35-44</div>
       </div>
     </div>
@@ -237,6 +297,45 @@ export default function App() {
   const [tab, setTab] = useState("chat");
   const [newCount, setNewCount] = useState(0);
   const [seedMessage, setSeedMessage] = useState(null);
+  const [showEdit, setShowEdit] = useState(false);
+  const [portfolio, setPortfolio] = useState(loadPortfolio);
+  const [stockPrices, setStockPrices] = useState({});
+  const [pricesUpdated, setPricesUpdated] = useState(null);
+
+  // Fetch live stock prices (cached 6h)
+  useEffect(() => {
+    const fetchPrices = async () => {
+      const cached = loadPriceCache();
+      if (cached) {
+        setStockPrices(cached.prices);
+        setPricesUpdated(cached.timestamp);
+        return;
+      }
+      if (!STOCKS_ENDPOINT) return;
+      try {
+        const res = await fetch(STOCKS_ENDPOINT);
+        const data = await res.json();
+        if (data.prices) {
+          setStockPrices(data.prices);
+          setPricesUpdated(data.timestamp);
+          localStorage.setItem("mm_prices", JSON.stringify({ prices: data.prices, timestamp: data.timestamp }));
+        }
+      } catch (_) {}
+    };
+    fetchPrices();
+  }, []);
+
+  const savePortfolio = (updated) => {
+    setPortfolio(updated);
+    localStorage.setItem("mm_portfolio", JSON.stringify(updated));
+  };
+
+  const stockMarketValue = Object.entries(portfolio.stocks).reduce((sum, [ticker, s]) => {
+    return sum + s.shares * (stockPrices[ticker] || s.avgCost);
+  }, 0);
+
+  const netWorth = portfolio.k401 + stockMarketValue + portfolio.cash
+    + portfolio.realEstate + portfolio.iBonds + portfolio.gold + portfolio.crypto + portfolio.other;
 
   useEffect(() => {
     const fetchCount = async () => {
@@ -290,8 +389,8 @@ export default function App() {
           <div style={{ fontSize: 15, fontWeight: 600, color: "#C4962A", letterSpacing: "0.1em", textTransform: "uppercase" }}>Mansa Musa</div>
           <div style={{ fontSize: 9.5, color: "#4A3E1E", letterSpacing: "0.16em", textTransform: "uppercase", marginTop: 1 }}>Sovereign Strategist</div>
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: "#C4962A" }}>$613K</div>
+        <div style={{ textAlign: "right" }} onClick={() => setShowEdit(true)}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "#C4962A" }}>{fmtK(netWorth)}</div>
           <div style={{ fontSize: 9, color: "#4A3E1E", letterSpacing: "0.08em" }}>NET WORTH</div>
         </div>
       </header>
@@ -299,8 +398,18 @@ export default function App() {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
         {tab === "chat" && <ChatView seedMessage={seedMessage} onClearSeed={() => setSeedMessage(null)} />}
         {tab === "feed" && <IntelFeed onDiscuss={discussLead} />}
-        {tab === "deck" && <DeckView onPick={pickPrompt} />}
+        {tab === "deck" && <DeckView onPick={pickPrompt} onEditPortfolio={() => setShowEdit(true)} portfolio={portfolio} stockPrices={stockPrices} netWorth={netWorth} />}
       </div>
+
+      {showEdit && (
+        <PortfolioEdit
+          portfolio={portfolio}
+          prices={stockPrices}
+          pricesUpdated={pricesUpdated}
+          onSave={savePortfolio}
+          onClose={() => setShowEdit(false)}
+        />
+      )}
 
       {/* Bottom tab bar */}
       <nav style={{
