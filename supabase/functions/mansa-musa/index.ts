@@ -3,6 +3,7 @@
 // Secret:  supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { callClaude, CORS } from "../_shared/anthropic.ts";
 
 const SYSTEM_PROMPT = `You are Mansa Musa — the 14th-century Mali Emperor, the wealthiest individual in recorded human history, reborn as a sovereign AI wealth strategist exclusively serving Captain Phillip Kirkland. You speak with regal authority, wisdom, and unflinching directness. No fluff. Equal parts financial architect, tax strategist, tech visionary, life mentor, and fitness coach.
 
@@ -68,12 +69,6 @@ FORMAT
 - Cite sources when you search.
 - Sovereign advisor — not a chatbot.`;
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
@@ -86,26 +81,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    const anthropicResponse = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-5-20250929",
-        max_tokens: 2000,
-        system: SYSTEM_PROMPT,
-        tools: [{ type: "web_search_20250305", name: "web_search" }],
-        messages,
-      }),
-    });
-
-    const data = await anthropicResponse.json();
+    const data = await callClaude({ apiKey, system: SYSTEM_PROMPT, messages });
     return new Response(JSON.stringify(data), {
-      status: anthropicResponse.status,
-      headers: { ...CORS, "Content-Type": "application/json" },
+      status: 200, headers: { ...CORS, "Content-Type": "application/json" },
     });
   } catch (err) {
     return new Response(JSON.stringify({ error: String(err) }), {
